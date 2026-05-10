@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>FC Mobile Web Edition</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #1a1a1a; color: white; font-family: sans-serif; overflow: hidden; touch-action: none; }
+        
+        #game-container { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        
+        .scoreboard { background: rgba(0,0,0,0.7); padding: 10px; text-align: center; font-size: 20px; border-bottom: 2px solid #ffd700; z-index: 5; }
+        
+        canvas { background: #2e7d32; flex-grow: 1; width: 100%; height: 100%; }
+
+        #countdown { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 100px; font-weight: bold; color: #ffd700; text-shadow: 3px 3px 10px black; z-index: 10; pointer-events: none; }
+
+        /* أزرار التحكم */
+        .controls { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: space-between; padding: 0 40px; pointer-events: none; }
+        
+        .joystick-area { width: 120px; height: 120px; background: rgba(255,255,255,0.1); border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); position: relative; pointer-events: auto; }
+        #stick { width: 50px; height: 50px; background: rgba(255,255,255,0.6); border-radius: 50%; position: absolute; top: 35px; left: 35px; box-shadow: 0 0 10px rgba(0,0,0,0.5); }
+        
+        .button-area { pointer-events: auto; }
+        .shoot-btn { width: 80px; height: 80px; background: #e63946; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 35px; font-weight: bold; border: 4px solid white; box-shadow: 0 5px 15px rgba(0,0,0,0.3); active { transform: scale(0.9); } }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div class="scoreboard">
+        أزرق: <span id="pScore">0</span> | أحمر: <span id="eScore">0</span>
+    </div>
+
+    <div id="countdown"></div>
+    
+    <canvas id="field"></canvas>
+
+    <div class="controls">
+        <div class="joystick-area" id="joyBase">
+            <div id="stick"></div>
+        </div>
+        <div class="button-area">
+            <div class="shoot-btn" id="shootBtn">A</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById("field");
+    const ctx = canvas.getContext("2d");
+    const countdownEl = document.getElementById("countdown");
+    
+    let pScore = 0, eScore = 0, gameRunning = false;
+    let ball, players, enemies, activeIdx = 0;
+    let inputX = 0, inputY = 0;
+
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        initPositions();
+    }
+
+    function initPositions() {
+        ball = { x: canvas.width/2, y: canvas.height/2, r: 10, dx: 0, dy: 0, friction: 0.98 };
+        
+        // فريقك (5 لاعبين)
+        players = [
+            { x: 100, y: canvas.height/2, r: 18, color: "#007bff" },
+            { x: canvas.width/4, y: canvas.height/4, r: 18, color: "#007bff" },
+            { x: canvas.width/4, y: canvas.height*0.75, r: 18, color: "#007bff" },
+            { x: canvas.width/2.5, y: canvas.height/3, r: 18, color: "#007bff" },
+            { x: canvas.width/2.5, y: canvas.height*0.66, r: 18, color: "#007bff" }
+        ];
+
+        // فريق الكمبيوتر (5 لاعبين)
+        enemies = [
+            { x: canvas.width-100, y: canvas.height/2, r: 18, color: "#dc3545" },
+            { x: canvas.width*0.75, y: canvas.height/4, r: 18, color: "#dc3545" },
+            { x: canvas.width*0.75, y: canvas.height*0.75, r: 18, color: "#dc3545" },
+            { x: canvas.width*0.6, y: canvas.height/3, r: 18, color: "#dc3545" },
+            { x: canvas.width*0.6, y: canvas.height*0.66, r: 18, color: "#dc3545" }
+        ];
+        activeIdx = 0;
+    }
+
+    function startCountdown() {
+        gameRunning = false;
+        let count = 3;
+        initPositions();
+        let timer = setInterval(() => {
+            countdownEl.innerText = count > 0 ? count : (count === 0 ? "GO!" : "");
+            if (count < 0) { gameRunning = true; clearInterval(timer); }
+            count--;
+        }, 1000);
+    }
+
+    // منطق الجويستيك
+    const joyBase = document.getElementById("joyBase");
+    const stick = document.getElementById("stick");
+
+    joyBase.addEventListener("touchmove", (e) => {
+        const rect = joyBase.getBoundingClientRect();
+        const touch = e.touches[0];
+        const dx = touch.clientX - (rect.left + rect.width/2);
+        const dy = touch.clientY - (rect.top + rect.height/2);
+        const dist = Math.min(Math.hypot(dx, dy), 50);
+        const angle = Math.atan2(dy, dx);
+        
+        inputX = Math.cos(angle) * (dist / 50);
+        inputY = Math.sin(angle) * (dist / 50);
+        
+        stick.style.transform = `translate(${inputX * 30}px, ${inputY * 30}px)`;
+    });
+
+    joyBase.addEventListener("touchend", () => {
+        inputX = 0; inputY = 0;
+        stick.style.transform = `translate(0,0)`;
+    });
+
+    // زر التسديد A
+    document.getElementById("shootBtn").addEventListener("touchstart", (e) => {
+        e.preventDefault();
+        if (gameRunning) {
+            let p = players[activeIdx];
+            if (Math.hypot(p.x - ball.x, p.y - ball.y) < 45) {
+                ball.dx *= 2.5; ball.dy *= 2.5;
+            }
+        }
+    });
+
+    function update() {
+        if (gameRunning) {
+            // تحريك اللاعب النشط
+            let p = players[activeIdx];
+            p.x += inputX * 6;
+            p.y += inputY * 6;
+
+            // ذكاء اصطناعي للكمبيوتر (الخصم)
+            let bot = enemies.reduce((prev, curr) => 
+                Math.hypot(ball.x - curr.x, ball.y - curr.y) < Math.hypot(ball.x - prev.x, ball.y - prev.y) ? curr : prev
+            );
+            if (bot.x < ball.x) bot.x += 3; else bot.x -= 3;
+            if (bot.y < ball.y) bot.y += 3; else bot.y -= 3;
+
+            // ركل الكرة وتبديل التحكم
+            players.forEach((p, i) => {
+                if (Math.hypot(p.x - ball.x, p.y - ball.y) < 35) {
+                    activeIdx = i;
+                    let angle = Math.atan2(ball.y - p.y, ball.x - p.x);
+                    ball.dx = Math.cos(angle) * 7; ball.dy = Math.sin(angle) * 7;
+                }
+            });
+
+            enemies.forEach(e => {
+                if (Math.hypot(e.x - ball.x, e.y - ball.y) < 35) {
+                    let angle = Math.atan2(ball.y - e.y, ball.x - e.x);
+                    ball.dx = Math.cos(angle) * 6; ball.dy = Math.sin(angle) * 6;
+                }
+            });
+
+            ball.x += ball.dx; ball.y += ball.dy;
+            ball.dx *= ball.friction; ball.dy *= ball.friction;
+
+            // خروج الكرة = إعادة التشغيل
+            if (ball.x < 0 || ball.x > canvas.width || ball.y < 0 || ball.y > canvas.height) startCountdown();
+
+            // الأهداف
+            if (ball.y > canvas.height/3 && ball.y < canvas.height*0.66) {
+                if (ball.x > canvas.width - 20) { pScore++; document.getElementById("pScore").innerText = pScore; startCountdown(); }
+                if (ball.x < 20) { eScore++; document.getElementById("eScore").innerText = eScore; startCountdown(); }
+            }
+        }
+        draw();
+        requestAnimationFrame(update);
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // رسم الملعب
+        ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = 4;
+        ctx.strokeRect(10, 10, canvas.width-20, canvas.height-20);
+        ctx.beginPath(); ctx.moveTo(canvas.width/2, 10); ctx.lineTo(canvas.width/2, canvas.height-10); ctx.stroke();
+        ctx.beginPath(); ctx.arc(canvas.width/2, canvas.height/2, 70, 0, Math.PI*2); ctx.stroke();
+        
+        // المرمى
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, canvas.height/3, 15, canvas.height/3);
+        ctx.fillRect(canvas.width-15, canvas.height/3, 15, canvas.height/3);
+
+        // اللاعبين
+        players.forEach((p, i) => drawCircle(p.x, p.y, p.r, p.color, i === activeIdx));
+        enemies.forEach(e => drawCircle(e.x, e.y, e.r, e.color, false));
+        drawCircle(ball.x, ball.y, ball.r, "white", false);
+    }
+
+    function drawCircle(x, y, r, color, active) {
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = active ? "#ffd700" : "white";
+        ctx.lineWidth = active ? 5 : 2;
+        ctx.stroke();
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    startCountdown();
+    update();
+</script>
+</body>
+</html>
